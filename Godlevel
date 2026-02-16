@@ -1,0 +1,117 @@
+from flask import Flask, request, jsonify, render_template_string
+from pymongo import MongoClient
+
+# ======================
+# יצירת Flask app
+# ======================
+app = Flask(__name__)
+
+# ======================
+# חיבור ל MongoDB
+# ======================
+client = MongoClient("mongodb://localhost:27017/")
+db = client["mydatabase"]
+users = db["users"]
+
+# ======================
+# HTML מינימלי בתוך הקובץ
+# ======================
+HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flask Mongo Test</title>
+</head>
+<body>
+
+<h2>Add User</h2>
+
+<input id="name" placeholder="name">
+<input id="age" placeholder="age">
+<button onclick="addUser()">Add</button>
+
+<h2>Users</h2>
+<ul id="list"></ul>
+
+<script>
+
+async function loadUsers()
+{
+    const res = await fetch("/api/users")
+    const data = await res.json()
+
+    const list = document.getElementById("list")
+    list.innerHTML = ""
+
+    data.forEach(user => {
+        const li = document.createElement("li")
+        li.innerText = user.name + " (" + user.age + ")"
+        list.appendChild(li)
+    })
+}
+
+async function addUser()
+{
+    const name = document.getElementById("name").value
+    const age = document.getElementById("age").value
+
+    await fetch("/api/users", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name, age})
+    })
+
+    loadUsers()
+}
+
+loadUsers()
+
+</script>
+
+</body>
+</html>
+"""
+
+# ======================
+# route לדף
+# ======================
+@app.route("/")
+def index():
+    return render_template_string(HTML)
+
+# ======================
+# API - GET
+# ======================
+@app.route("/api/users", methods=["GET"])
+def get_users():
+
+    result = []
+
+    for user in users.find():
+        result.append({
+            "name": user.get("name"),
+            "age": user.get("age")
+        })
+
+    return jsonify(result)
+
+# ======================
+# API - POST
+# ======================
+@app.route("/api/users", methods=["POST"])
+def add_user():
+
+    data = request.json
+
+    users.insert_one({
+        "name": data["name"],
+        "age": data["age"]
+    })
+
+    return jsonify({"status": "ok"})
+
+# ======================
+# run
+# ======================
+if __name__ == "__main__":
+    app.run(debug=True)
