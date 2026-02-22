@@ -1,4 +1,275 @@
 """
+להלן אותה תשובה מסודרת, מתומצתת ופרקטית, עם תוספת של פעולות בסיסיות יומיומיות כמו: הצגת DBs, טבלאות, סכמות, קולקשנים, אינדקסים, דוגמאות CRUD, ועוד.
+
+
+---
+
+1) בסיס לינוקס לתפעול DB (RHEL)
+
+שירותים (systemd)
+
+מה זה: ניהול הפעלה/עצירה/לוגים של שירותי DB.
+
+
+sudo systemctl status postgresql
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+sudo systemctl restart postgresql
+sudo journalctl -u postgresql -n 200 --no-pager
+
+sudo systemctl status mongod
+sudo systemctl restart mongod
+sudo journalctl -u mongod -n 200 --no-pager
+
+רשת/פורט
+
+מה זה: בדיקה מי מאזין על הפורט + פתיחה בפיירוול.
+
+
+ss -tulnp | egrep '5432|27017'
+sudo firewall-cmd --list-all
+sudo firewall-cmd --add-port=5432/tcp --permanent
+sudo firewall-cmd --add-port=27017/tcp --permanent
+sudo firewall-cmd --reload
+
+דיסק/זיכרון
+
+מה זה: DB נופלים מהר כשדיסק מלא (במיוחד WAL/לוגים).
+
+
+df -h
+free -m
+du -sh /var/lib/pgsql/data/pg_wal 2>/dev/null
+
+
+---
+
+2) PostgreSQL – תפעול בסיסי (CLI: psql)
+
+כניסה
+
+sudo -u postgres psql
+
+הצגת DBs / משתמשים / סכמות
+
+מה זה: ניווט בסיסי במסד.
+
+
+\l          -- כל הדאטאבייסים
+\du         -- משתמשים/תפקידים (roles)
+\dn         -- סכמות (schemas)
+\c appdb    -- התחברות לדאטאבייס
+
+הצגת טבלאות / מבנה / נתונים
+
+מה זה: לראות מה קיים ומה העמודות.
+
+
+\dt             -- טבלאות בסכמה הנוכחית
+\dt public.*    -- כל הטבלאות ב-public
+\d students     -- מבנה טבלה (עמודות, types)
+\d+ students    -- מבנה + עוד פרטים (storage וכו')
+SELECT * FROM students LIMIT 20;   -- הצגת נתונים
+
+אינדקסים, constraints, sequences, views
+
+\di             -- אינדקסים
+\ds             -- sequences (SERIAL/IDENTITY)
+\dv             -- views
+\dp             -- הרשאות על אובייקטים
+
+CRUD קצר (דוגמה)
+
+CREATE TABLE IF NOT EXISTS students (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  grade INT
+);
+
+INSERT INTO students (name, grade) VALUES ('Yali', 95);
+
+SELECT * FROM students WHERE grade >= 90;
+
+UPDATE students SET grade = 98 WHERE name = 'Yali';
+
+DELETE FROM students WHERE name = 'Yali';
+
+טרנזקציות
+
+מה זה: שינוי קבוצתי עם rollback אם משהו נשבר.
+
+
+BEGIN;
+UPDATE students SET grade = grade + 1;
+-- אם הכל טוב:
+COMMIT;
+-- אם לא:
+ROLLBACK;
+
+גיבוי בסיסי (לוגי)
+
+pg_dump -Fc -d appdb -f /backup/appdb.dump
+pg_restore -d appdb /backup/appdb.dump
+
+
+---
+
+3) PostgreSQL – קצת מתקדם (WAL / רפליקציה / failover)
+
+בדיקות WAL / Archiver
+
+sudo -u postgres psql -c "SHOW wal_level;"
+sudo -u postgres psql -c "SELECT * FROM pg_stat_archiver;"
+
+בדיקות רפליקציה (Primary)
+
+SELECT client_addr, application_name, state, sync_state
+FROM pg_stat_replication;
+
+בדיקות רפליקציה (Secondary)
+
+SELECT pg_is_in_recovery();
+SELECT now() - pg_last_xact_replay_timestamp() AS lag;
+
+קידום רפליקה (Failover ידני)
+
+sudo -u postgres pg_ctl promote -D /var/lib/pgsql/data
+
+
+---
+
+4) MongoDB – תפעול בסיסי (CLI: mongosh)
+
+כניסה
+
+mongosh
+
+הצגת DBs / מעבר DB
+
+מה זה: רשימת בסיס נתונים וניווט.
+
+
+show dbs
+use appdb
+db.getName()
+
+הצגת Collections
+
+מה זה: המקביל לטבלאות.
+
+
+show collections
+db.getCollectionNames()
+
+הצגת מסמכים (Find) + Limit/Pretty
+
+db.students.find().limit(20)
+db.students.find().limit(20).pretty()
+db.students.find({grade: {$gte: 90}}).limit(20)
+
+CRUD קצר (דוגמה)
+
+db.students.insertOne({name:"Yali", grade:95, subjects:["math","physics"]})
+
+db.students.insertMany([
+  {name:"Noa", grade:88},
+  {name:"Dan", grade:91}
+])
+
+db.students.updateOne({name:"Yali"}, {$set:{grade:98}})
+db.students.updateMany({grade: {$lt: 90}}, {$inc:{grade:1}})
+
+db.students.deleteOne({name:"Dan"})
+db.students.deleteMany({grade: {$lt: 60}})
+
+הצגת מבנה “סכימתי” בפועל (מה קיים במסמכים)
+
+מה זה: Mongo אין schema קשיח, אז מסתכלים דרך דוגמאות/אגרגציה.
+
+
+db.students.findOne()
+
+אינדקסים
+
+מה זה: קריטי לביצועים.
+
+
+db.students.getIndexes()
+db.students.createIndex({name:1})
+db.students.createIndex({grade:-1})
+
+ספירות וסטטיסטיקות בסיסיות
+
+db.students.countDocuments()
+db.stats()
+db.students.stats()
+
+Aggregation בסיסי (קצת יותר מתקדם אבל פרקטי)
+
+db.students.aggregate([
+  {$group: {_id: null, avgGrade: {$avg: "$grade"}, maxGrade: {$max: "$grade"}}}
+])
+
+
+---
+
+5) MongoDB – Replica Set (Primary/Secondaries) בדיקות יומיומיות
+
+סטטוס רפליקציה
+
+rs.status()
+rs.printReplicationInfo()
+rs.printSecondaryReplicationInfo()
+
+Write Concern (בטיחות כתיבה)
+
+db.students.insertOne({x:1}, {writeConcern:{w:"majority"}})
+
+
+---
+
+6) גיבוי ושחזור Mongo
+
+mongodump --out /backup/mongo_$(date +%F)
+mongorestore /backup/mongo_2026-02-22
+
+
+---
+
+7) Checklist קצר לתפעול יומי (בלי חורים)
+
+Linux
+
+systemctl status …, journalctl -u …
+
+df -h, ss -tulnp
+
+
+Postgres
+
+\l, \dt, \d table, SELECT … LIMIT
+
+גיבוי: pg_dump, בדיקת רפליקציה: pg_stat_replication
+
+
+Mongo
+
+show dbs, show collections, db.coll.find().limit(20)
+
+אינדקסים: getIndexes()
+
+Replica set: rs.status()
+
+
+
+---
+
+אם תרצה, אני יכול גם להוסיף “פקודות עזר” של psql (כמו \timing, \x, \watch) ושל mongosh (כמו it, help, output formatting) כדי שיהיה לך כלי עבודה מלא לתפעול יום־יומי.
+
+
+
+
+
 ===========================================================
 FLASK MASTER (TEACHING + USAGE EDITION)
 ===========================================================
